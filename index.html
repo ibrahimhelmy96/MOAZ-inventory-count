@@ -93,7 +93,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
     <div>تم جرده<b id="done">0</b></div>
     <div>العجز<b id="shortage">0</b></div>
     <div>الزيادة<b id="over">0</b></div>
-    <div>إجمالي الأجربة<b id="total">0</b></div>
+    <div>إجمالي الأصناف<b id="total">0</b></div>
   </div>
 </section>
 
@@ -265,7 +265,6 @@ window.editItem = function(barcode) {
   if(prod) selectProduct(prod);
 };
 
-// تفعيل الكاميرا بالمكتبة الحديثة
 document.getElementById('cameraBtn').onclick = () => {
   const readerEl = document.getElementById('reader');
   readerEl.style.display = 'block';
@@ -287,9 +286,7 @@ document.getElementById('cameraBtn').onclick = () => {
         alert('باركود غير موجود: ' + decodedText);
       }
     },
-    (errorMessage) => {
-      // جاري البحث...
-    }
+    (errorMessage) => {}
   ).catch(err => {
     alert("تعذر الوصول للكاميرا: " + err);
   });
