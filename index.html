@@ -14,7 +14,7 @@ header{background:#0f766e;color:white;padding:18px 16px;position:sticky;top:0;z-
 h1{font-size:22px;margin:0 0 2px}
 .sub{opacity:.9;font-size:13px}
 .doctor-name{font-size:14px;font-weight:normal;opacity:.95;margin-top:2px}
-main{max-width:950px;margin:auto;padding:14px}
+main{max-width:900px;margin:auto;padding:14px}
 .card{background:white;border-radius:16px;padding:15px;margin-bottom:14px;box-shadow:0 2px 12px #00000010}
 .row{display:flex;gap:8px;flex-wrap:wrap}
 .row>*{flex:1;min-width:140px}
@@ -79,11 +79,11 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
   <h3>الصنف المحدد</h3>
   <div id="productInfo" class="notice">قم بمسح الباركود أو ابحث عن الصنف لبدء الجرد.</div>
   <div id="countArea" class="hidden">
-    <label>الكمية الفعلية</label>
-    <input id="actual" class="big" type="number" min="0" step="1" placeholder="مثال: 12">
+    <label>الكمية المضافة (ستضاف على الفعلي الحالي)</label>
+    <input id="actual" class="big" type="number" min="1" step="1" placeholder="أدخل الكمية المراد إضافتها...">
     <div class="row" style="margin-top:8px">
-      <button id="addBtn">✅ حفظ الجرد للصنف</button>
-      <button class="secondary" id="plusBtn">+1 زيادة</button>
+      <button id="addBtn">✅ إضافة للجرد الحالي</button>
+      <button class="secondary" id="plusBtn">+1 زيادة مباشرة</button>
     </div>
   </div>
 </section>
@@ -106,9 +106,8 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
     <table>
       <thead>
         <tr>
-          <th>Product Ref</th>
-          <th>اسم الصنف</th>
-          <th>السعر</th>
+          <th>الباركود</th>
+          <th>الصنف</th>
           <th>السيستم</th>
           <th>الفعلي</th>
           <th>الفرق</th>
@@ -128,26 +127,9 @@ let selectedProduct = null;
 let html5QrCode = null;
 let fuse = null;
 
-// دالة فحص مرنة جدا تنظف أسماء الخانات من المسافات
-function getPropFlex(obj, targetKeys) {
-  if (!obj) return '';
-  const objKeys = Object.keys(obj);
-  
-  for (let key of objKeys) {
-    const cleanKey = key.replace(/[^a-zA-Z0-9أ-ي]/g, '').toLowerCase();
-    for (let target of targetKeys) {
-      const cleanTarget = target.replace(/[^a-zA-Z0-9أ-ي]/g, '').toLowerCase();
-      if (cleanKey === cleanTarget || cleanKey.includes(cleanTarget)) {
-        if (obj[key] !== undefined && obj[key] !== null) return obj[key];
-      }
-    }
-  }
-  return '';
-}
-
 function initFuse() {
   fuse = new Fuse(database, {
-    keys: Object.keys(database[0] || {}),
+    keys: ['Product Name', 'Product Barcode'],
     threshold: 0.4,
     distance: 100
   });
@@ -179,9 +161,8 @@ function renderTable() {
     const diff = item.actual - item.system;
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${item.ref || '-'}</td>
+      <td>${barcode}</td>
       <td>${item.name}</td>
-      <td>${item.price || 0}</td>
       <td>${item.system}</td>
       <td>${item.actual}</td>
       <td class="${diff < 0 ? 'short' : (diff > 0 ? 'over' : '')}">${diff}</td>
@@ -197,17 +178,24 @@ function renderTable() {
 
 function selectProduct(product) {
   selectedProduct = product;
-  const pName = getPropFlex(product, ['product name', 'name', 'اسم الصنف', 'اسم المنتج', 'الصنف']);
-  const pCode = getPropFlex(product, ['product barcode', 'barcode', 'الباركود', 'باركود']);
-  const pRef = getPropFlex(product, ['product ref', 'ref', 'كود الصنف', 'المرجع', 'كود']);
-  const pPrice = getPropFlex(product, ['sales price', 'price', 'السعر', 'سعر البيع', 'سعر']);
-  const pQoh = parseFloat(getPropFlex(product, ['qoh', 'quantity', 'الكمية', 'الرصيد'])) || 0;
+  const barcode = product['Product Barcode'];
+  
+  if (!inventory[barcode]) {
+    inventory[barcode] = {
+      name: product['Product Name'],
+      system: product['QoH'] || 0,
+      actual: 0
+    };
+  }
 
-  document.getElementById('productInfo').innerHTML = `<b>${pName}</b><br>Product Ref: <b>${pRef || 'غير موجود'}</b> | السعر: <b>${pPrice || 0}</b> | السيستم: ${pQoh}`;
+  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${barcode} | السيستم: ${product['QoH'] || 0} | الفعلي الحالي: <b>${inventory[barcode].actual}</b>`;
   document.getElementById('countArea').classList.remove('hidden');
-  document.getElementById('actual').value = (inventory[pCode] ? inventory[pCode].actual : pQoh);
+  
+  const actualInput = document.getElementById('actual');
+  actualInput.value = '';
+  actualInput.placeholder = 'أدخل الكمية المضافة...';
   document.getElementById('dropdown').classList.add('hidden');
-  document.getElementById('actual').focus();
+  actualInput.focus();
 }
 
 document.getElementById('file').addEventListener('change', (e) => {
@@ -219,13 +207,9 @@ document.getElementById('file').addEventListener('change', (e) => {
     const wb = XLSX.read(bstr, { type: 'binary' });
     const wsname = wb.SheetNames[0];
     database = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
-    
-    if(database.length > 0) {
-      initFuse();
-      updateStats();
-      const detectedKeys = Object.keys(database[0]).join(', ');
-      alert('تم تحميل ' + database.length + ' صنف بنجاح!\n\nالأعمدة المكتشفة بملفك:\n[' + detectedKeys + ']');
-    }
+    initFuse();
+    updateStats();
+    alert('تم تحميل البيانات بنجاح! عدد الأصناف: ' + database.length);
   };
   reader.readAsBinaryString(file);
 });
@@ -244,9 +228,7 @@ document.getElementById('search').addEventListener('input', (e) => {
     results.slice(0, 8).forEach(res => {
       const div = document.createElement('div');
       div.className = 'search-item';
-      const pName = getPropFlex(res.item, ['product name', 'name', 'اسم الصنف', 'الصنف']);
-      const pCode = getPropFlex(res.item, ['product barcode', 'barcode', 'الباركود']);
-      div.innerText = `${pName} (${pCode})`;
+      div.innerText = `${res.item['Product Name']} (${res.item['Product Barcode']})`;
       div.onclick = () => selectProduct(res.item);
       dropdown.appendChild(div);
     });
@@ -257,7 +239,7 @@ document.getElementById('search').addEventListener('input', (e) => {
 
 document.getElementById('barcode').addEventListener('change', (e) => {
   const code = e.target.value.trim();
-  const prod = database.find(p => String(getPropFlex(p, ['product barcode', 'barcode', 'الباركود'])) === code);
+  const prod = database.find(p => String(p['Product Barcode']) === code);
   if(prod) {
     selectProduct(prod);
   } else {
@@ -267,31 +249,31 @@ document.getElementById('barcode').addEventListener('change', (e) => {
 });
 
 document.getElementById('addBtn').onclick = () => {
-  if(!selectedProduct) return;
+  if (!selectedProduct) return;
   
-  const pCode = getPropFlex(selectedProduct, ['product barcode', 'barcode', 'الباركود']);
-  const pRef = getPropFlex(selectedProduct, ['product ref', 'ref', 'كود الصنف', 'المرجع', 'كود']);
-  const pName = getPropFlex(selectedProduct, ['product name', 'name', 'اسم الصنف', 'الصنف']);
-  const pPrice = getPropFlex(selectedProduct, ['sales price', 'price', 'السعر', 'سعر البيع', 'سعر']);
-  const pQoh = parseFloat(getPropFlex(selectedProduct, ['qoh', 'quantity', 'الكمية', 'الرصيد'])) || 0;
-  const actualVal = parseFloat(document.getElementById('actual').value) || 0;
+  const barcode = selectedProduct['Product Barcode'];
+  const addedAmount = parseFloat(document.getElementById('actual').value) || 0;
 
-  inventory[pCode] = {
-    ref: pRef,
-    name: pName,
-    price: pPrice,
-    system: pQoh,
-    actual: actualVal
-  };
+  inventory[barcode].actual += addedAmount;
 
   renderTable();
+
   document.getElementById('countArea').classList.add('hidden');
-  document.getElementById('productInfo').innerText = 'تم حفظ الجرد بنجاح!';
+  document.getElementById('productInfo').innerHTML = `✅ تم إضافة (<b>${addedAmount}</b>) للصنف. الإجمالي الفعلي الجديد: <b>${inventory[barcode].actual}</b>`;
 };
 
+document.getElementById('actual').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('addBtn').click();
+  }
+});
+
 document.getElementById('plusBtn').onclick = () => {
-  const input = document.getElementById('actual');
-  input.value = (parseFloat(input.value) || 0) + 1;
+  if (!selectedProduct) return;
+  const barcode = selectedProduct['Product Barcode'];
+  inventory[barcode].actual += 1;
+  renderTable();
+  selectProduct(selectedProduct);
 };
 
 window.deleteItem = function(barcode) {
@@ -302,7 +284,7 @@ window.deleteItem = function(barcode) {
 };
 
 window.editItem = function(barcode) {
-  const prod = database.find(p => String(getPropFlex(p, ['product barcode', 'barcode', 'الباركود'])) === barcode);
+  const prod = database.find(p => String(p['Product Barcode']) === barcode);
   if(prod) selectProduct(prod);
 };
 
@@ -320,7 +302,7 @@ document.getElementById('cameraBtn').onclick = () => {
     { facingMode: "environment" }, 
     config, 
     (decodedText) => {
-      const prod = database.find(p => String(getPropFlex(p, ['product barcode', 'barcode', 'الباركود'])) === decodedText);
+      const prod = database.find(p => String(p['Product Barcode']) === decodedText);
       if(prod) {
         selectProduct(prod);
       } else {
@@ -343,9 +325,8 @@ document.getElementById('stopBtn').onclick = () => {
 
 document.getElementById('exportBtn').onclick = () => {
   const data = Object.keys(inventory).map(barcode => ({
-    'Product Ref': inventory[barcode].ref,
+    'الباركود': barcode,
     'اسم الصنف': inventory[barcode].name,
-    'السعر': inventory[barcode].price,
     'كمية السيستم': inventory[barcode].system,
     'الكمية الفعلية': inventory[barcode].actual,
     'الفرق': inventory[barcode].actual - inventory[barcode].system
