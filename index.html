@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>جرد صيدلية معاذ</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
 <style>
 *{box-sizing:border-box}
@@ -25,14 +25,12 @@ button.danger{background:#b42318;color:white}
 input{width:100%;background:white}
 .big{font-size:20px}
 label{display:block;font-size:13px;margin:6px 0;color:#52606d}
-#reader{width:100%;overflow:hidden;border-radius:14px;background:#111;min-height:180px;display:none}
-#reader video{width:100%;max-height:340px;object-fit:cover}
+#reader{width:100%;border-radius:14px;overflow:hidden;background:#000;margin-top:10px;display:none}
 .stat{display:flex;gap:8px;flex-wrap:wrap}
 .stat div{flex:1;min-width:110px;background:#f1f5f9;border-radius:12px;padding:10px;text-align:center}
 .stat b{display:block;font-size:22px;margin-top:4px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
-.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eef2ff}
 .short{color:#b42318;font-weight:bold}
 .over{color:#067647;font-weight:bold}
 .notice{font-size:13px;color:#52606d;line-height:1.6}
@@ -69,7 +67,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 
 <section class="card">
   <div class="row">
-    <button id="cameraBtn">📷 فتح كاميرا الموبايل</button>
+    <button id="cameraBtn">📷 تشغيل الكاميرا الخلفية</button>
     <button class="secondary" id="stopBtn">إيقاف الكاميرا</button>
   </div>
   <div id="reader"></div>
@@ -126,7 +124,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 let database = [];
 let inventory = {};
 let selectedProduct = null;
-let codeReader = null;
+let html5QrCode = null;
 let fuse = null;
 
 function initFuse() {
@@ -187,7 +185,6 @@ function selectProduct(product) {
   document.getElementById('actual').focus();
 }
 
-// قراءة ملف الـ Excel
 document.getElementById('file').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -199,12 +196,11 @@ document.getElementById('file').addEventListener('change', (e) => {
     database = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
     initFuse();
     updateStats();
-    alert('تم تحميل قاعدة البيانات بنجاح! عدد الأصناف: ' + database.length);
+    alert('تم تحميل البيانات بنجاح! عدد الأصناف: ' + database.length);
   };
   reader.readAsBinaryString(file);
 });
 
-// البحث المضبب (Fuzzy Search)
 document.getElementById('search').addEventListener('input', (e) => {
   const val = e.target.value.trim();
   const dropdown = document.getElementById('dropdown');
@@ -228,19 +224,17 @@ document.getElementById('search').addEventListener('input', (e) => {
   }
 });
 
-// إدخال باركود الـ Scanner
 document.getElementById('barcode').addEventListener('change', (e) => {
   const code = e.target.value.trim();
   const prod = database.find(p => String(p['Product Barcode']) === code);
   if(prod) {
     selectProduct(prod);
   } else {
-    alert('الصنف غير موجود في القاعدة المرفوعة');
+    alert('الصنف غير موجود بالملف المرفوع');
   }
   e.target.value = '';
 });
 
-// زر حفظ الكمية
 document.getElementById('addBtn').onclick = () => {
   if(!selectedProduct) return;
   const actualVal = parseFloat(document.getElementById('actual').value) || 0;
@@ -259,45 +253,56 @@ document.getElementById('plusBtn').onclick = () => {
   input.value = (parseFloat(input.value) || 0) + 1;
 };
 
-// مسح صنف معين
 window.deleteItem = function(barcode) {
-  if(confirm('هل أنت تأكد من مسح هذا الصنف من نتائج الجرد؟')) {
+  if(confirm('هل أنت تأكد من مسح هذا الصنف؟')) {
     delete inventory[barcode];
     renderTable();
   }
 };
 
-// تعديل صنف
 window.editItem = function(barcode) {
   const prod = database.find(p => String(p['Product Barcode']) === barcode);
   if(prod) selectProduct(prod);
 };
 
-// تفعيل كاميرا الموبايل
-document.getElementById('cameraBtn').onclick = async () => {
-  try {
-    const readerEl = document.getElementById('reader');
-    readerEl.style.display = 'block';
-    codeReader = new ZXing.BrowserMultiFormatReader();
-    await codeReader.decodeFromVideoDevice(undefined, readerEl, (result) => {
-      if (result) {
-        const prod = database.find(p => String(p['Product Barcode']) === result.text);
-        if(prod) selectProduct(prod);
-        codeReader.reset();
-        readerEl.style.display = 'none';
-      }
-    });
-  } catch (err) {
-    alert('تعذر فتح الكاميرا، يرجى السماح للموقع باستخدام الكاميرا من إعدادات المتصفح.');
+// تفعيل الكاميرا بالمكتبة الحديثة
+document.getElementById('cameraBtn').onclick = () => {
+  const readerEl = document.getElementById('reader');
+  readerEl.style.display = 'block';
+  
+  if(!html5QrCode) {
+    html5QrCode = new Html5Qrcode("reader");
   }
+
+  const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+  
+  html5QrCode.start(
+    { facingMode: "environment" }, 
+    config, 
+    (decodedText) => {
+      const prod = database.find(p => String(p['Product Barcode']) === decodedText);
+      if(prod) {
+        selectProduct(prod);
+      } else {
+        alert('باركود غير موجود: ' + decodedText);
+      }
+    },
+    (errorMessage) => {
+      // جاري البحث...
+    }
+  ).catch(err => {
+    alert("تعذر الوصول للكاميرا: " + err);
+  });
 };
 
 document.getElementById('stopBtn').onclick = () => {
-  if(codeReader) codeReader.reset();
-  document.getElementById('reader').style.display = 'none';
+  if(html5QrCode) {
+    html5QrCode.stop().then(() => {
+      document.getElementById('reader').style.display = 'none';
+    }).catch(err => console.log(err));
+  }
 };
 
-// تصدير النتائج لملف Excel
 document.getElementById('exportBtn').onclick = () => {
   const data = Object.keys(inventory).map(barcode => ({
     'الباركود': barcode,
@@ -312,9 +317,8 @@ document.getElementById('exportBtn').onclick = () => {
   XLSX.writeFile(wb, "تقرير_الجرد.xlsx");
 };
 
-// مسح نتائج الجرد
 document.getElementById('clearBtn').onclick = () => {
-  if(confirm('هل تريد مسح جميع نتائج الجرد الحالية؟')) {
+  if(confirm('هل تريد مسح جميع نتائج الجرد؟')) {
     inventory = {};
     renderTable();
   }
