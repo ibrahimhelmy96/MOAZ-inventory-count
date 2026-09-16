@@ -40,6 +40,10 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 .search-item{padding:10px;cursor:pointer;border-bottom:1px solid #f0f0f0}
 .search-item:hover{background:#f5f7fa}
 .action-btn{padding:4px 8px;border-radius:6px;font-size:12px;margin-left:4px}
+
+/* التنسيقات الجديدة للإشعارات والتظليل */
+.alert-warning{background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:8px 12px;border-radius:8px;font-weight:bold;margin-top:8px;display:inline-block}
+tr.highlight-row{background-color:#fef9c3 !important;transition:background-color 0.5s ease}
 </style>
 </head>
 <body>
@@ -160,6 +164,7 @@ function renderTable() {
     const item = inventory[barcode];
     const diff = item.actual - item.system;
     const tr = document.createElement('tr');
+    tr.id = `row-${barcode}`;
     tr.innerHTML = `
       <td>${barcode}</td>
       <td>${item.name}</td>
@@ -178,12 +183,35 @@ function renderTable() {
 
 function selectProduct(product) {
   selectedProduct = product;
+  const barcode = product['Product Barcode'];
   const refInfo = product['Product Ref'] ? ` | Ref: ${product['Product Ref']}` : '';
-  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${product['Product Barcode']}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}`;
+  const isAlreadyScanned = inventory.hasOwnProperty(barcode);
+  
+  // عرض علامة التنبيه عند تكرار قراءة الصنف
+  let warningHTML = '';
+  if (isAlreadyScanned) {
+    warningHTML = `<br><div class="alert-warning">⚠️ تم جرده سابقاً (الكمية الحالية: ${inventory[barcode].actual})</div>`;
+  }
+
+  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${barcode}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}${warningHTML}`;
   document.getElementById('countArea').classList.remove('hidden');
-  document.getElementById('actual').value = (inventory[product['Product Barcode']] ? inventory[product['Product Barcode']].actual : (product['QoH'] || 0));
+  
+  // تحديد الكمية الفعلية مع التركيز للبدء بالتعديل اليدوي
+  const actualInput = document.getElementById('actual');
+  actualInput.value = isAlreadyScanned ? inventory[barcode].actual : (product['QoH'] || 0);
   document.getElementById('dropdown').classList.add('hidden');
-  document.getElementById('actual').focus();
+  actualInput.focus();
+  actualInput.select();
+
+  // تظليل الصف وتمرير الشاشة إليه في جدول نتائج الجرد
+  if (isAlreadyScanned) {
+    const row = document.getElementById(`row-${barcode}`);
+    if (row) {
+      document.querySelectorAll('tr').forEach(r => r.classList.remove('highlight-row'));
+      row.classList.add('highlight-row');
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
 }
 
 document.getElementById('file').addEventListener('change', (e) => {
