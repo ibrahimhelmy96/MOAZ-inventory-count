@@ -370,11 +370,18 @@ document.getElementById('stopBtn').onclick = () => {
 document.getElementById('exportBtn').onclick = () => {
   const data = Object.keys(inventory).map(barcode => {
     const prod = database.find(p => String(p['Product Barcode']) === barcode);
+    
+    // البحث عن السعر داخل حقل sales price بجميع أشكاله
+    let itemPrice = 0;
+    if (prod) {
+      itemPrice = prod['sales price'] ?? prod['Sales Price'] ?? prod['Sales price'] ?? prod['SALES PRICE'] ?? 0;
+    }
+
     return {
       'الباركود': barcode,
       'Product Ref': inventory[barcode].ref,
       'اسم الصنف': inventory[barcode].name,
-      'السعر': prod ? (prod['Price'] || prod['price'] || 0) : 0,
+      'السعر': itemPrice,
       'كمية السيستم': inventory[barcode].system,
       'الكمية الفعلية': inventory[barcode].actual,
       'الفرق': inventory[barcode].actual - inventory[barcode].system
