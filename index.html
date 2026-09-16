@@ -36,7 +36,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 .notice{font-size:13px;color:#52606d;line-height:1.6}
 .hidden{display:none}
 .search-results{position:relative}
-.search-dropdown{position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #d4dbe2;border-radius:11px;max-height:200px;overflow-y:auto;z-index:10;box-shadow:0 4px 12px #00000015}
+.search-dropdown{position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #d4dbe2;border-radius:11px;max-height:250px;overflow-y:auto;z-index:10;box-shadow:0 4px 12px #00000015}
 .search-item{padding:10px;cursor:pointer;border-bottom:1px solid #f0f0f0}
 .search-item:hover{background:#f5f7fa}
 .action-btn{padding:4px 8px;border-radius:6px;font-size:12px;margin-left:4px}
@@ -59,7 +59,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
     </div>
     <div class="search-results">
       <label>بحث يدوي مرن (Fuzzy Search)</label>
-      <input id="search" placeholder="اكتب اسم المنتج أو جزء منه...">
+      <input id="search" placeholder="اكتب اسم المنتج، الباركود، أو Ref...">
       <div id="dropdown" class="search-dropdown hidden"></div>
     </div>
   </div>
@@ -79,11 +79,11 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
   <h3>الصنف المحدد</h3>
   <div id="productInfo" class="notice">قم بمسح الباركود أو ابحث عن الصنف لبدء الجرد.</div>
   <div id="countArea" class="hidden">
-    <label>الكمية المضافة (ستضاف على الفعلي الحالي)</label>
-    <input id="actual" class="big" type="number" min="1" step="1" placeholder="أدخل الكمية المراد إضافتها...">
+    <label>الكمية الفعلية</label>
+    <input id="actual" class="big" type="number" min="0" step="1" placeholder="مثال: 12">
     <div class="row" style="margin-top:8px">
-      <button id="addBtn">✅ إضافة للجرد الحالي</button>
-      <button class="secondary" id="plusBtn">+1 زيادة مباشرة</button>
+      <button id="addBtn">✅ حفظ الجرد للصنف</button>
+      <button class="secondary" id="plusBtn">+1 زيادة</button>
     </div>
   </div>
 </section>
@@ -129,7 +129,7 @@ let fuse = null;
 
 function initFuse() {
   fuse = new Fuse(database, {
-    keys: ['Product Name', 'Product Barcode'],
+    keys: ['Product Name', 'Product Barcode', 'Product Ref'],
     threshold: 0.4,
     distance: 100
   });
@@ -178,24 +178,12 @@ function renderTable() {
 
 function selectProduct(product) {
   selectedProduct = product;
-  const barcode = product['Product Barcode'];
-  
-  if (!inventory[barcode]) {
-    inventory[barcode] = {
-      name: product['Product Name'],
-      system: product['QoH'] || 0,
-      actual: 0
-    };
-  }
-
-  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${barcode} | السيستم: ${product['QoH'] || 0} | الفعلي الحالي: <b>${inventory[barcode].actual}</b>`;
+  const refInfo = product['Product Ref'] ? ` | Ref: ${product['Product Ref']}` : '';
+  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${product['Product Barcode']}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}`;
   document.getElementById('countArea').classList.remove('hidden');
-  
-  const actualInput = document.getElementById('actual');
-  actualInput.value = '';
-  actualInput.placeholder = 'أدخل الكمية المضافة...';
+  document.getElementById('actual').value = (inventory[product['Product Barcode']] ? inventory[product['Product Barcode']].actual : (product['QoH'] || 0));
   document.getElementById('dropdown').classList.add('hidden');
-  actualInput.focus();
+  document.getElementById('actual').focus();
 }
 
 document.getElementById('file').addEventListener('change', (e) => {
@@ -221,15 +209,32 @@ document.getElementById('search').addEventListener('input', (e) => {
     dropdown.classList.add('hidden');
     return;
   }
-  const results = fuse.search(val);
+
+  // 1. التصفية المباشرة بـ Product Ref أولاً
+  const exactRefMatches = database.filter(item => 
+    item['Product Ref'] && String(item['Product Ref']).toLowerCase().includes(val.toLowerCase())
+  );
+
+  let finalResults = [];
+
+  if (exactRefMatches.length > 0) {
+    finalResults = exactRefMatches;
+  } else {
+    // 2. الرجوع للبحث التقريبي الشامل في حال عدم وجود مطابقة للـ Ref
+    const fuseResults = fuse.search(val);
+    finalResults = fuseResults.map(res => res.item);
+  }
+
   dropdown.innerHTML = '';
-  if(results.length > 0) {
+  if(finalResults.length > 0) {
     dropdown.classList.remove('hidden');
-    results.slice(0,50).forEach(res => {
+    // عرض النتائج المتطابقة حتى 30 نتيجة
+    finalResults.slice(0, 30).forEach(item => {
       const div = document.createElement('div');
       div.className = 'search-item';
-      div.innerText = `${res.item['Product Name']} (${res.item['Product Barcode']})`;
-      div.onclick = () => selectProduct(res.item);
+      const refText = item['Product Ref'] ? ` | Ref: ${item['Product Ref']}` : '';
+      div.innerText = `${item['Product Name']} (${item['Product Barcode']})${refText}`;
+      div.onclick = () => selectProduct(item);
       dropdown.appendChild(div);
     });
   } else {
@@ -249,31 +254,22 @@ document.getElementById('barcode').addEventListener('change', (e) => {
 });
 
 document.getElementById('addBtn').onclick = () => {
-  if (!selectedProduct) return;
-  
-  const barcode = selectedProduct['Product Barcode'];
-  const addedAmount = parseFloat(document.getElementById('actual').value) || 0;
-
-  inventory[barcode].actual += addedAmount;
-
+  if(!selectedProduct) return;
+  const actualVal = parseFloat(document.getElementById('actual').value) || 0;
+  inventory[selectedProduct['Product Barcode']] = {
+    name: selectedProduct['Product Name'],
+    ref: selectedProduct['Product Ref'] || '',
+    system: selectedProduct['QoH'] || 0,
+    actual: actualVal
+  };
   renderTable();
-
   document.getElementById('countArea').classList.add('hidden');
-  document.getElementById('productInfo').innerHTML = `✅ تم إضافة (<b>${addedAmount}</b>) للصنف. الإجمالي الفعلي الجديد: <b>${inventory[barcode].actual}</b>`;
+  document.getElementById('productInfo').innerText = 'تم حفظ الجرد بنجاح!';
 };
 
-document.getElementById('actual').addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') {
-    document.getElementById('addBtn').click();
-  }
-});
-
 document.getElementById('plusBtn').onclick = () => {
-  if (!selectedProduct) return;
-  const barcode = selectedProduct['Product Barcode'];
-  inventory[barcode].actual += 1;
-  renderTable();
-  selectProduct(selectedProduct);
+  const input = document.getElementById('actual');
+  input.value = (parseFloat(input.value) || 0) + 1;
 };
 
 window.deleteItem = function(barcode) {
@@ -326,6 +322,7 @@ document.getElementById('stopBtn').onclick = () => {
 document.getElementById('exportBtn').onclick = () => {
   const data = Object.keys(inventory).map(barcode => ({
     'الباركود': barcode,
+    'Product Ref': inventory[barcode].ref,
     'اسم الصنف': inventory[barcode].name,
     'كمية السيستم': inventory[barcode].system,
     'الكمية الفعلية': inventory[barcode].actual,
