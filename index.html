@@ -41,8 +41,8 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 .search-item:hover{background:#f5f7fa}
 .action-btn{padding:4px 8px;border-radius:6px;font-size:12px;margin-left:4px}
 
-/* التنسيقات الجديدة للإشعارات والتظليل */
 .alert-warning{background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:8px 12px;border-radius:8px;font-weight:bold;margin-top:8px;display:inline-block}
+.status-tag{background:#e0f2fe;color:#0369a1;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:bold;margin-bottom:10px;display:inline-block}
 tr.highlight-row{background-color:#fef9c3 !important;transition:background-color 0.5s ease}
 </style>
 </head>
@@ -56,6 +56,7 @@ tr.highlight-row{background-color:#fef9c3 !important;transition:background-color
 
 <main>
 <section class="card">
+  <div id="saveStatus" class="status-tag">💾 جاهز - يتم حفظ البيانات تلقائياً</div>
   <div class="row">
     <div>
       <label>رفع ملف Excel البيانات</label>
@@ -104,7 +105,8 @@ tr.highlight-row{background-color:#fef9c3 !important;transition:background-color
 <section class="card">
   <div class="row">
     <button id="exportBtn">📥 تصدير ملف Excel للنتيجة</button>
-    <button class="secondary" id="clearBtn">مسح بيانات الجرد</button>
+    <button class="secondary" id="downloadOldBtn">📄 تنزيل ملف Excel الأصلي</button>
+    <button class="danger" id="clearBtn">🗑️ مسح وإعادة بدء جرد جديد</button>
   </div>
   <div style="overflow:auto;margin-top:12px">
     <table>
@@ -130,6 +132,27 @@ let inventory = {};
 let selectedProduct = null;
 let html5QrCode = null;
 let fuse = null;
+
+// تحميل البيانات المحفوظة سابقاً فور فتح التطبيق
+window.addEventListener('DOMContentLoaded', () => {
+  const savedDatabase = localStorage.getItem('pharmacy_database');
+  const savedInventory = localStorage.getItem('pharmacy_inventory');
+
+  if (savedDatabase) {
+    database = JSON.parse(savedDatabase);
+    initFuse();
+  }
+
+  if (savedInventory) {
+    inventory = JSON.parse(savedInventory);
+    renderTable();
+  }
+});
+
+function saveDataToLocalStorage() {
+  localStorage.setItem('pharmacy_database', JSON.stringify(database));
+  localStorage.setItem('pharmacy_inventory', JSON.stringify(inventory));
+}
 
 function initFuse() {
   fuse = new Fuse(database, {
@@ -187,7 +210,6 @@ function selectProduct(product) {
   const refInfo = product['Product Ref'] ? ` | Ref: ${product['Product Ref']}` : '';
   const isAlreadyScanned = inventory.hasOwnProperty(barcode);
   
-  // عرض علامة التنبيه عند تكرار قراءة الصنف
   let warningHTML = '';
   if (isAlreadyScanned) {
     warningHTML = `<br><div class="alert-warning">⚠️ تم جرده سابقاً (الكمية الحالية: ${inventory[barcode].actual})</div>`;
@@ -196,14 +218,12 @@ function selectProduct(product) {
   document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${barcode}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}${warningHTML}`;
   document.getElementById('countArea').classList.remove('hidden');
   
-  // تحديد الكمية الفعلية مع التركيز للبدء بالتعديل اليدوي
   const actualInput = document.getElementById('actual');
   actualInput.value = isAlreadyScanned ? inventory[barcode].actual : (product['QoH'] || 0);
   document.getElementById('dropdown').classList.add('hidden');
   actualInput.focus();
   actualInput.select();
 
-  // تظليل الصف وتمرير الشاشة إليه في جدول نتائج الجرد
   if (isAlreadyScanned) {
     const row = document.getElementById(`row-${barcode}`);
     if (row) {
@@ -224,6 +244,7 @@ document.getElementById('file').addEventListener('change', (e) => {
     const wsname = wb.SheetNames[0];
     database = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
     initFuse();
+    saveDataToLocalStorage();
     updateStats();
     alert('تم تحميل البيانات بنجاح! عدد الأصناف: ' + database.length);
   };
@@ -238,7 +259,6 @@ document.getElementById('search').addEventListener('input', (e) => {
     return;
   }
 
-  // 1. التصفية المباشرة بـ Product Ref أولاً
   const exactRefMatches = database.filter(item => 
     item['Product Ref'] && String(item['Product Ref']).toLowerCase().includes(val.toLowerCase())
   );
@@ -248,7 +268,6 @@ document.getElementById('search').addEventListener('input', (e) => {
   if (exactRefMatches.length > 0) {
     finalResults = exactRefMatches;
   } else {
-    // 2. الرجوع للبحث التقريبي الشامل في حال عدم وجود مطابقة للـ Ref
     const fuseResults = fuse.search(val);
     finalResults = fuseResults.map(res => res.item);
   }
@@ -256,7 +275,6 @@ document.getElementById('search').addEventListener('input', (e) => {
   dropdown.innerHTML = '';
   if(finalResults.length > 0) {
     dropdown.classList.remove('hidden');
-    // عرض النتائج المتطابقة حتى 30 نتيجة
     finalResults.slice(0, 30).forEach(item => {
       const div = document.createElement('div');
       div.className = 'search-item';
@@ -291,6 +309,7 @@ document.getElementById('addBtn').onclick = () => {
     actual: actualVal
   };
   renderTable();
+  saveDataToLocalStorage();
   document.getElementById('countArea').classList.add('hidden');
   document.getElementById('productInfo').innerText = 'تم حفظ الجرد بنجاح!';
 };
@@ -304,6 +323,7 @@ window.deleteItem = function(barcode) {
   if(confirm('هل أنت تأكد من مسح هذا الصنف؟')) {
     delete inventory[barcode];
     renderTable();
+    saveDataToLocalStorage();
   }
 };
 
@@ -362,9 +382,21 @@ document.getElementById('exportBtn').onclick = () => {
   XLSX.writeFile(wb, "تقرير_الجرد.xlsx");
 };
 
+document.getElementById('downloadOldBtn').onclick = () => {
+  if (database.length === 0) {
+    alert('لم يتم رفع ملف بيانات أصلي بعد!');
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(database);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "البيانات الأصلية");
+  XLSX.writeFile(wb, "بيانات_السيستم_الأصلية.xlsx");
+};
+
 document.getElementById('clearBtn').onclick = () => {
-  if(confirm('هل تريد مسح جميع نتائج الجرد؟')) {
+  if(confirm('هل تريد مسح جميع بيانات الجرد والبدء من جديد؟')) {
     inventory = {};
+    localStorage.removeItem('pharmacy_inventory');
     renderTable();
   }
 };
