@@ -40,6 +40,7 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 .search-item{padding:10px;cursor:pointer;border-bottom:1px solid #f0f0f0}
 .search-item:hover{background:#f5f7fa}
 .action-btn{padding:4px 8px;border-radius:6px;font-size:12px;margin-left:4px}
+.badge-scanned{background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:12px;display:inline-block;margin-top:4px}
 </style>
 </head>
 <body>
@@ -79,10 +80,10 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
   <h3>الصنف المحدد</h3>
   <div id="productInfo" class="notice">قم بمسح الباركود أو ابحث عن الصنف لبدء الجرد.</div>
   <div id="countArea" class="hidden">
-    <label>الكمية الفعلية</label>
+    <label id="actualLabel">الكمية الفعلية</label>
     <input id="actual" class="big" type="number" min="0" step="1" placeholder="مثال: 12">
     <div class="row" style="margin-top:8px">
-      <button id="addBtn">✅ حفظ الجرد للصنف</button>
+      <button id="addBtn">✅ حفظ / تحديث الجرد</button>
       <button class="secondary" id="plusBtn">+1 زيادة</button>
     </div>
   </div>
@@ -122,10 +123,18 @@ th,td{padding:9px;border-bottom:1px solid #e5e7eb;text-align:right}
 
 <script>
 let database = [];
-let inventory = {};
+let inventory = JSON.parse(localStorage.getItem('pharmacy_inventory') || '{}');
 let selectedProduct = null;
 let html5QrCode = null;
 let fuse = null;
+
+window.addEventListener('DOMContentLoaded', () => {
+  renderTable();
+});
+
+function saveLocalInventory() {
+  localStorage.setItem('pharmacy_inventory', JSON.stringify(inventory));
+}
 
 function initFuse() {
   fuse = new Fuse(database, {
@@ -178,12 +187,32 @@ function renderTable() {
 
 function selectProduct(product) {
   selectedProduct = product;
+  const barcodeStr = String(product['Product Barcode'] || '');
   const refInfo = product['Product Ref'] ? ` | Ref: ${product['Product Ref']}` : '';
-  document.getElementById('productInfo').innerHTML = `<b>${product['Product Name']}</b><br>الباركود: ${product['Product Barcode']}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}`;
+  const isAlreadyScanned = !!inventory[barcodeStr];
+  
+  let scannedStatusHTML = '';
+  if (isAlreadyScanned) {
+    const prevActual = inventory[barcodeStr].actual;
+    scannedStatusHTML = `<br><span class="badge-scanned">⚠️ الصنف مجرود سابقاً (الكمية المسجلة حالياً: ${prevActual})</span>`;
+  }
+
+  document.getElementById('productInfo').innerHTML = `
+    <b>${product['Product Name']}</b><br>
+    الباركود: ${barcodeStr}${refInfo} | الكمية بالسيستم: ${product['QoH'] || 0}
+    ${scannedStatusHTML}
+  `;
+
   document.getElementById('countArea').classList.remove('hidden');
-  document.getElementById('actual').value = (inventory[product['Product Barcode']] ? inventory[product['Product Barcode']].actual : (product['QoH'] || 0));
+  
+  const actualInput = document.getElementById('actual');
+  
+  // إذا كان مجرود مسبقاً يعرض الكمية الحالية لتعديلها أو الزيادة عليها، أما إذا كان جديداً فيضع الكمية بالسيستم كافتراض
+  actualInput.value = isAlreadyScanned ? inventory[barcodeStr].actual : (product['QoH'] || 0);
+  
   document.getElementById('dropdown').classList.add('hidden');
-  document.getElementById('actual').focus();
+  actualInput.focus();
+  actualInput.select();
 }
 
 document.getElementById('file').addEventListener('change', (e) => {
@@ -192,9 +221,17 @@ document.getElementById('file').addEventListener('change', (e) => {
   const reader = new FileReader();
   reader.onload = (evt) => {
     const bstr = evt.target.result;
-    const wb = XLSX.read(bstr, { type: 'binary' });
+    const wb = XLSX.read(bstr, { type: 'binary', raw: false });
     const wsname = wb.SheetNames[0];
-    database = XLSX.utils.sheet_to_json(wb.Sheets[wsname]);
+    const rawData = XLSX.utils.sheet_to_json(wb.Sheets[wsname], { defval: "" });
+    
+    database = rawData.map(item => ({
+      ...item,
+      'Product Barcode': String(item['Product Barcode'] || '').trim(),
+      'Product Ref': String(item['Product Ref'] || '').trim(),
+      'QoH': parseFloat(item['QoH']) || 0
+    }));
+
     initFuse();
     updateStats();
     alert('تم تحميل البيانات بنجاح! عدد الأصناف: ' + database.length);
@@ -210,17 +247,14 @@ document.getElementById('search').addEventListener('input', (e) => {
     return;
   }
 
-  // 1. التصفية المباشرة بـ Product Ref أولاً
   const exactRefMatches = database.filter(item => 
-    item['Product Ref'] && String(item['Product Ref']).toLowerCase().includes(val.toLowerCase())
+    item['Product Ref'] && item['Product Ref'].toLowerCase().includes(val.toLowerCase())
   );
 
   let finalResults = [];
-
   if (exactRefMatches.length > 0) {
     finalResults = exactRefMatches;
   } else {
-    // 2. الرجوع للبحث التقريبي الشامل في حال عدم وجود مطابقة للـ Ref
     const fuseResults = fuse.search(val);
     finalResults = fuseResults.map(res => res.item);
   }
@@ -228,12 +262,13 @@ document.getElementById('search').addEventListener('input', (e) => {
   dropdown.innerHTML = '';
   if(finalResults.length > 0) {
     dropdown.classList.remove('hidden');
-    // عرض النتائج المتطابقة حتى 30 نتيجة
     finalResults.slice(0, 30).forEach(item => {
       const div = document.createElement('div');
       div.className = 'search-item';
+      const barcodeKey = String(item['Product Barcode']);
+      const isScanned = inventory[barcodeKey] ? ' ✔️ (مجرود)' : '';
       const refText = item['Product Ref'] ? ` | Ref: ${item['Product Ref']}` : '';
-      div.innerText = `${item['Product Name']} (${item['Product Barcode']})${refText}`;
+      div.innerText = `${item['Product Name']} (${barcodeKey})${refText}${isScanned}`;
       div.onclick = () => selectProduct(item);
       dropdown.appendChild(div);
     });
@@ -242,30 +277,50 @@ document.getElementById('search').addEventListener('input', (e) => {
   }
 });
 
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.search-results')) {
+    document.getElementById('dropdown').classList.add('hidden');
+  }
+});
+
 document.getElementById('barcode').addEventListener('change', (e) => {
   const code = e.target.value.trim();
-  const prod = database.find(p => String(p['Product Barcode']) === code);
+  if(!code) return;
+  const prod = database.find(p => p['Product Barcode'] === code || p['Product Ref'] === code);
   if(prod) {
     selectProduct(prod);
   } else {
-    alert('الصنف غير موجود بالملف المرفوع');
+    alert('الصنف غير موجود بالملف المرفوع: ' + code);
   }
   e.target.value = '';
 });
 
-document.getElementById('addBtn').onclick = () => {
+function saveCurrentProductCount() {
   if(!selectedProduct) return;
   const actualVal = parseFloat(document.getElementById('actual').value) || 0;
-  inventory[selectedProduct['Product Barcode']] = {
+  const barcodeKey = String(selectedProduct['Product Barcode']);
+  
+  inventory[barcodeKey] = {
     name: selectedProduct['Product Name'],
     ref: selectedProduct['Product Ref'] || '',
     system: selectedProduct['QoH'] || 0,
     actual: actualVal
   };
+  
+  saveLocalInventory();
   renderTable();
   document.getElementById('countArea').classList.add('hidden');
-  document.getElementById('productInfo').innerText = 'تم حفظ الجرد بنجاح!';
-};
+  document.getElementById('productInfo').innerText = 'تم حفظ / تحديث الجرد بنجاح!';
+  document.getElementById('barcode').focus();
+}
+
+document.getElementById('addBtn').onclick = saveCurrentProductCount;
+
+document.getElementById('actual').addEventListener('keyup', (e) => {
+  if (e.key === 'Enter') {
+    saveCurrentProductCount();
+  }
+});
 
 document.getElementById('plusBtn').onclick = () => {
   const input = document.getElementById('actual');
@@ -275,12 +330,13 @@ document.getElementById('plusBtn').onclick = () => {
 window.deleteItem = function(barcode) {
   if(confirm('هل أنت تأكد من مسح هذا الصنف؟')) {
     delete inventory[barcode];
+    saveLocalInventory();
     renderTable();
   }
 };
 
 window.editItem = function(barcode) {
-  const prod = database.find(p => String(p['Product Barcode']) === barcode);
+  const prod = database.find(p => p['Product Barcode'] === barcode);
   if(prod) selectProduct(prod);
 };
 
@@ -298,11 +354,12 @@ document.getElementById('cameraBtn').onclick = () => {
     { facingMode: "environment" }, 
     config, 
     (decodedText) => {
-      const prod = database.find(p => String(p['Product Barcode']) === decodedText);
+      const code = decodedText.trim();
+      const prod = database.find(p => p['Product Barcode'] === code || p['Product Ref'] === code);
       if(prod) {
         selectProduct(prod);
       } else {
-        alert('باركود غير موجود: ' + decodedText);
+        alert('باركود غير موجود: ' + code);
       }
     },
     (errorMessage) => {}
@@ -320,6 +377,10 @@ document.getElementById('stopBtn').onclick = () => {
 };
 
 document.getElementById('exportBtn').onclick = () => {
+  if(Object.keys(inventory).length === 0) {
+    alert('لا يوجد بيانات مجرودة لتصديرها!');
+    return;
+  }
   const data = Object.keys(inventory).map(barcode => ({
     'الباركود': barcode,
     'Product Ref': inventory[barcode].ref,
@@ -331,12 +392,13 @@ document.getElementById('exportBtn').onclick = () => {
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "نتائج الجرد");
-  XLSX.writeFile(wb, "تقرير_الجرد.xlsx");
+  XLSX.writeFile(wb, "تقرير_جرد_صيدلية_معاذ.xlsx");
 };
 
 document.getElementById('clearBtn').onclick = () => {
-  if(confirm('هل تريد مسح جميع نتائج الجرد؟')) {
+  if(confirm('هل تريد مسح جميع نتائج الجرد المخزنة؟')) {
     inventory = {};
+    saveLocalInventory();
     renderTable();
   }
 };
